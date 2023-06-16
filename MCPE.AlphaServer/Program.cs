@@ -1,32 +1,41 @@
 ﻿using System;
-using System.Diagnostics;
+using System.IO;
+using System.Net;
 using System.Threading;
 using System.Threading.Tasks;
+using MCPE.AlphaServer.Game;
+using MCPE.AlphaServer.Network;
+using MCPE.AlphaServer.RakNet;
+using MCPE.AlphaServer.Utils;
+using Serilog;
+using Serilog.Sinks.SystemConsole.Themes;
 
-namespace MCPE.AlphaServer {
-    class Program {
-        static async Task Main(string[] _) {
-            Console.WriteLine("Starting MCPE.AlphaServer.");
+namespace MCPE.AlphaServer;
 
-            // For RakEncoder
-            Debug.Assert(BitConverter.IsLittleEndian);
+internal static class Program {
+    private static async Task Main(string[] _) {
+#if DEBUG
+        Directory.SetCurrentDirectory("/Users/atipls/work/MCPE.AlphaServer");
+#endif
+        var mainWorld = World.From("Data/MainWorld/");
+        
+        mainWorld.PrintEntitiesData();
+        Console.WriteLine("Level Data:");
+        mainWorld.PrintLevelData();
 
-            Server.The = new Server(19132);
+        Logger.LogBackend = new LoggerConfiguration()
+            .WriteTo.Console(theme: SystemConsoleTheme.Colored)
+            .MinimumLevel.Debug()
+            .CreateLogger();
 
-            var listenerThread = new Thread(Server.The.ListenerThread);
-            var updaterThread = new Thread(Server.The.ClientUpdaterThread);
+        Logger.Info("MCPE.AlphaServer starting.");
 
-            listenerThread.Name = "Listener Thread";
-            updaterThread.Name = "Updater Thread";
+        new RakNetServer(19132) {
+            ServerName = "MCPE.AlphaServer"
+        }.Start(new GameServer(mainWorld));
 
-            listenerThread.Start();
-            updaterThread.Start();
+        Logger.Info("MCPE.AlphaServer started.");
 
-            listenerThread.Join();
-            updaterThread.Join();
-
-            while (Server.The.IsRunning)
-                await Task.Delay(100);
-        }
+        await Task.Delay(Timeout.Infinite);
     }
 }

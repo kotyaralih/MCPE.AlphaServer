@@ -1,45 +1,74 @@
-﻿using MCPE.AlphaServer.Packets;
-using MCPE.AlphaServer.Utils;
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Numerics;
-using System.Text;
-using System.Threading.Tasks;
+using System.IO;
 
-namespace MCPE.AlphaServer.Game {
-    public class World {
-        public static World The;
-        public Server Server => Server.The;
+namespace MCPE.AlphaServer.Game;
 
-        public List<Entity> Entities = new List<Entity>();
-        public List<UdpConnection> Players = new List<UdpConnection>();
-        public Dictionary<string, object> Metadata = new Dictionary<string, object>();
+using MCPE.AlphaServer.NBT;
 
-        public int LastEID; // Last Entity ID
+public class World {
+    private Chunk[,] _chunks;
+    private NbtFile _levelDat;
+    private NbtFile _entitiesDat;
 
-        public UdpConnection GetPlayerByName(string name) => Players.FirstOrDefault(P => P.Player?.Username == name);
-        public async Task AddPlayer(UdpConnection toAdd) {
-            var newPlayer = Server.Clients[toAdd.EndPoint];
+    public string LevelName { get; private set; }
+    public int Seed { get; private set; }
+    public int SpawnX { get; private set; }
+    public int SpawnY { get; private set; }
+    public int SpawnZ { get; private set; }
+    public int Time { get; private set; }
+    
+    
+    public Chunk this[int x, int z] => _chunks[x, z];
 
-            foreach (var P in Players) {
-                await Server.Send(P, new AddPlayerPacket(newPlayer.Player));
-            }
+    public static World From(string folder) {
+        NbtFile.BigEndianByDefault = false;
 
-            Players.Add(newPlayer);
+        var world = new World() {
+            _chunks = new Chunk[16, 16],
+            _levelDat = new NbtFile(),
+            _entitiesDat = new NbtFile()
+        };
+
+        world._levelDat.LoadFromFileWithOffset(Path.Combine(folder, "level.dat"), 8);
+        world._entitiesDat.LoadFromFileWithOffset(Path.Combine(folder, "entities.dat"), 12);
+        
+        using var chunksDat = File.OpenRead(Path.Combine(folder, "chunks.dat"));
+        using var chunkReader = new BinaryReader(chunksDat);
+
+        var chunkMetadata = Chunk.ReadMetadata(chunkReader);
+
+        for (var xz = 0; xz < 16 * 16; xz++) {
+            var x = xz % 16;
+            var z = xz / 16;
+
+            var offset = chunkMetadata[x, z];
+            if (offset == 0)
+                continue;
+
+            chunksDat.Seek(offset, SeekOrigin.Begin);
+            world._chunks[x, z] = Chunk.From(chunkReader);
         }
 
+        var levelRootTag = world._levelDat.RootTag;
+        
+        world.LevelName = levelRootTag["LevelName"].StringValue;
+        world.Seed = (int)levelRootTag["RandomSeed"].LongValue;
+        world.SpawnX = levelRootTag["SpawnX"].IntValue;
+        world.SpawnY = levelRootTag["SpawnY"].IntValue;
+        world.SpawnZ = levelRootTag["SpawnZ"].IntValue;
+        world.Time = (int)levelRootTag["Time"].LongValue;
+        
 
-        public async Task MovePlayer(UdpConnection toMove, Vector3 position, float pitch, float yaw) {
-            var player = Server.Clients[toMove.EndPoint];
+        return world;
+    }
 
-            player.Player.Position = position;
-
-            foreach (var P in Players) {
-                if (P.Player.CID == player.Player.CID)
-                    continue;
-                await Server.Send(P, new MovePlayerPacket(position, player.Player.EID, new Vector3(pitch, yaw, 0f)));
-            }
-        }
+    public void PrintLevelData() {
+        foreach (var data in _levelDat.RootTag)
+            Console.WriteLine(data);
+    }
+    
+    public void PrintEntitiesData() {
+        foreach (var data in _entitiesDat.RootTag)
+            Console.WriteLine(data);
     }
 }
